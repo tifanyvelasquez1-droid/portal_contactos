@@ -46,10 +46,12 @@
   .brand-name{font-weight:700; font-size:15.5px; color:var(--navy); letter-spacing:-.01em;}
   .brand-sub{font-size:11.5px; color:var(--text-dim); font-weight:500;}
   .count-pill{
-    background:var(--blue-pale); color:var(--blue-deep); font-weight:600; font-size:13px;
-    padding:7px 14px; border-radius:999px; white-space:nowrap;
+    background:var(--blue-pale); color:var(--blue-deep); font-weight:600;
+    padding:8px 16px; border-radius:12px; white-space:nowrap;
+    display:flex; align-items:baseline; gap:6px; line-height:1;
   }
-  .count-pill b{font-family:var(--mono); font-weight:700;}
+  .count-pill b{font-family:var(--mono); font-weight:800; font-size:21px; letter-spacing:-.02em;}
+  .count-pill span{font-size:12px; font-weight:600; color:var(--blue-deep); opacity:.8;}
 
   /* Search hero */
   .search-hero{max-width:760px; margin:0 auto; padding:44px 24px 8px; text-align:center;}
@@ -98,7 +100,7 @@
   .results{display:flex; flex-direction:column; gap:8px;}
   .result-card{
     background:var(--surface); border:1px solid var(--border); border-radius:13px;
-    padding:12px 14px; cursor:pointer; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+    padding:13px 14px; cursor:pointer; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease;
     display:flex; align-items:center; gap:13px;
   }
   .result-card:hover{
@@ -111,14 +113,16 @@
     color:#fff; font-weight:700; font-size:14.5px; letter-spacing:.01em;
   }
   .result-main{min-width:0; flex:1;}
-  .result-name{font-weight:600; font-size:14.5px; color:var(--navy); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .result-sub{font-size:12.5px; color:var(--text-dim); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:400;}
-  .result-tags{display:flex; gap:6px; flex-shrink:0; align-items:center;}
+  .result-name{font-weight:700; font-size:14.5px; color:var(--navy); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .result-empresa{font-weight:600; font-size:12.5px; color:var(--blue-deep); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .result-meta{display:flex; align-items:center; gap:7px; margin-top:5px; flex-wrap:wrap;}
   .tag{
     font-family:var(--mono); font-size:10.5px; padding:4px 8px; border-radius:6px;
     background:var(--blue-pale); color:var(--blue-deep); border:1px solid #DCE6FC;
     white-space:nowrap; font-weight:600;
   }
+  .tag.muted{background:var(--bg); color:var(--text-dim); border-color:var(--border); font-weight:500;}
+  .result-cargo{font-size:11.5px; color:var(--text-dim); font-weight:400; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .arrow{color:var(--text-faint); flex-shrink:0;}
 
   .loading{display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:13.5px; padding:40px 0; justify-content:center; font-weight:500;}
@@ -155,6 +159,9 @@
     border-bottom:1px solid var(--border); font-size:13.5px;
   }
   .field-row:last-child{border-bottom:none;}
+  .field-row.priority .field-label{color:var(--blue-deep);}
+  .field-row.priority .field-value{color:var(--navy); font-weight:600;}
+  .field-divider{padding:12px 0 6px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--text-faint); border-bottom:1px solid var(--border); margin-bottom:2px;}
   .field-label{color:var(--text-dim); flex-shrink:0; width:42%; font-weight:600;}
   .field-value{color:var(--text); text-align:right; word-break:break-word; font-weight:500; font-size:13.5px;}
   .field-value.no-data{color:var(--text-faint); font-style:italic; font-weight:400;}
@@ -174,7 +181,6 @@
   @media (max-width:600px){
     .topbar{padding:14px 16px;}
     .search-hero{padding:32px 16px 8px;}
-    .result-tags{display:none;}
   }
 </style>
 </head>
@@ -187,10 +193,10 @@
     </div>
     <div>
       <div class="brand-name">Contactos B1</div>
-      <div class="brand-sub">CRM Business One</div>
+      <div class="brand-sub">Asistente Virtual TIF</div>
     </div>
   </div>
-  <div class="count-pill" id="countPill" style="display:none;"><b id="mTotal">0</b> contactos</div>
+  <div class="count-pill" id="countPill" style="display:none;"><b id="mTotal">0</b><span>contactos</span></div>
 </div>
 
 <div class="search-hero">
@@ -256,25 +262,48 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal();
 });
 
+// ---------- Búsqueda: caché + cancelación de solicitudes en curso ----------
+const searchCache = new Map(); // término (lowercase) -> data
 let debounceTimer;
+let activeController = null;
+let latestRequestId = 0;
+
 qInput.addEventListener('input', () => {
   clearTimeout(debounceTimer);
   const term = qInput.value.trim();
   if (term.length < 2) {
+    if (activeController) activeController.abort();
     content.innerHTML = '<div class="hint">Escribe al menos <b>2 caracteres</b> para buscar.</div>';
     return;
   }
+
+  const key = term.toLowerCase();
+  if (searchCache.has(key)) {
+    // Resultado ya visto en esta sesión: se muestra al instante, sin esperar red.
+    renderResults(searchCache.get(key), term);
+    return;
+  }
+
   content.innerHTML = '<div class="loading"><span class="spinner"></span> Buscando...</div>';
-  debounceTimer = setTimeout(() => runSearch(term), 300);
+  debounceTimer = setTimeout(() => runSearch(term), 280);
 });
 
 async function runSearch(term) {
+  const key = term.toLowerCase();
+  if (activeController) activeController.abort(); // cancela cualquier búsqueda anterior aún en curso
+  const controller = new AbortController();
+  activeController = controller;
+  const requestId = ++latestRequestId;
+
   try {
-    const res = await fetch(`${API_URL}?action=search&q=${encodeURIComponent(term)}`);
+    const res = await fetch(`${API_URL}?action=search&q=${encodeURIComponent(term)}`, { signal: controller.signal });
     const json = await res.json();
+    if (requestId !== latestRequestId) return; // llegó una respuesta obsoleta; se ignora
     if (!json.ok) throw new Error(json.error || 'Error desconocido');
+    searchCache.set(key, json.data);
     renderResults(json.data, term);
   } catch (err) {
+    if (err.name === 'AbortError') return;
     content.innerHTML = `<div class="hint">No se pudo buscar: ${escapeHtml(err.message)}</div>`;
   }
 }
@@ -292,27 +321,36 @@ function colorFor(str) {
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
 
+function formatCurrency(value) {
+  const num = parseFloat(String(value).replace(/[^0-9.-]+/g, ''));
+  if (isNaN(num)) return String(value);
+  return 'S/ ' + num.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function renderResults(rows, term) {
-  if (!rows.length) {
-    content.innerHTML = `<div class="hint">No se encontraron resultados para "<b>${escapeHtml(term)}</b>".</div>`;
+  // Solo deben listarse perfiles de contacto (con nombre o apellido).
+  // Registros que son la propia empresa (sin persona asociada) se descartan: no aportan datos de contacto.
+  const perfiles = rows.filter(r => (r.nombre && r.nombre.trim()) || (r.apellido && r.apellido.trim()));
+
+  if (!perfiles.length) {
+    content.innerHTML = `<div class="hint">No se encontraron contactos para "<b>${escapeHtml(term)}</b>".</div>`;
     return;
   }
-  const toolbar = `<div class="results-toolbar"><span>${rows.length} resultado${rows.length === 1 ? '' : 's'}</span></div>`;
-  const cards = rows.map(r => {
-    const nombreCompleto = [r.nombre, r.apellido].filter(Boolean).join(' ') || r.empresa || '(sin nombre)';
-    const sub = [r.cargo, r.empresa].filter(Boolean).join(' · ');
+  const toolbar = `<div class="results-toolbar"><span>${perfiles.length} contacto${perfiles.length === 1 ? '' : 's'}</span></div>`;
+  const cards = perfiles.map(r => {
+    const nombreCompleto = [r.nombre, r.apellido].filter(Boolean).join(' ');
     const ini = initials(r.nombre, r.apellido, r.empresa);
-    const bg = colorFor(nombreCompleto);
+    const bg = colorFor(nombreCompleto || r.empresa || '?');
     return `
       <div class="result-card" onclick="openDetail('${escapeAttr(r.id)}')">
         <div class="avatar" style="background:${bg}">${ini}</div>
         <div class="result-main">
-          <div class="result-name">${escapeHtml(nombreCompleto)}</div>
-          <div class="result-sub">${escapeHtml(sub || '—')}</div>
-        </div>
-        <div class="result-tags">
-          ${r.ruc ? `<span class="tag">RUC ${escapeHtml(r.ruc)}</span>` : ''}
-          ${r.origen ? `<span class="tag">${escapeHtml(r.origen)}</span>` : ''}
+          <div class="result-name">${escapeHtml(nombreCompleto || '(sin nombre)')}</div>
+          ${r.empresa ? `<div class="result-empresa">${escapeHtml(r.empresa)}</div>` : ''}
+          <div class="result-meta">
+            ${r.ruc ? `<span class="tag">RUC ${escapeHtml(r.ruc)}</span>` : ''}
+            ${r.cargo ? `<span class="result-cargo">${escapeHtml(r.cargo)}</span>` : ''}
+          </div>
         </div>
         <svg class="arrow" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
       </div>`;
@@ -339,6 +377,46 @@ async function openDetail(id) {
   }
 }
 
+// Reordena los campos: empresa, RUC, facturación, nombre completo, teléfono, correo y LinkedIn
+// van primero (lo esencial para un vendedor); el resto (cargos, agentes públicos, etc.) va al final.
+function buildOrderedFields(campos) {
+  const findField = (keys) => campos.find(c => keys.some(k => c.campo.toLowerCase().includes(k)));
+  const used = new Set();
+  const priority = [];
+
+  const empresa = findField(['empresa', 'razon social']);
+  if (empresa) { priority.push(empresa); used.add(empresa); }
+
+  const ruc = findField(['ruc']);
+  if (ruc) { priority.push(ruc); used.add(ruc); }
+
+  const facturacion = findField(['facturac']);
+  if (facturacion) {
+    const sinDato = facturacion.valor === null || facturacion.valor === undefined || String(facturacion.valor).trim() === '';
+    priority.push({ campo: facturacion.campo, valor: sinDato ? facturacion.valor : formatCurrency(facturacion.valor) });
+    used.add(facturacion);
+  }
+
+  const nombre = findField(['nombre']);
+  const apellido = findField(['apellido']);
+  if (nombre) used.add(nombre);
+  if (apellido) used.add(apellido);
+  const nombreCompleto = [nombre && nombre.valor, apellido && apellido.valor].filter(Boolean).join(' ');
+  if (nombreCompleto) priority.push({ campo: 'Nombre completo', valor: nombreCompleto });
+
+  const tel = findField(['telefono', 'celular', 'whatsapp', 'movil']);
+  if (tel) { priority.push(tel); used.add(tel); }
+
+  const correo = findField(['correo', 'email', 'mail']);
+  if (correo) { priority.push(correo); used.add(correo); }
+
+  const linkedin = findField(['linkedin']);
+  if (linkedin) { priority.push(linkedin); used.add(linkedin); }
+
+  const resto = campos.filter(c => !used.has(c));
+  return { priority, resto };
+}
+
 function renderDetail(detail) {
   const campos = detail.campos || [];
   const getVal = (labelParts) => {
@@ -362,15 +440,22 @@ function renderDetail(detail) {
   if (linkedin) actions.push(`<a class="action-btn" href="${escapeAttr(linkedin.startsWith('http') ? linkedin : 'https://'+linkedin)}" target="_blank">🔗 LinkedIn</a>`);
   document.getElementById('modalActions').innerHTML = actions.join('');
 
-  const rows = campos.map(c => {
+  const { priority, resto } = buildOrderedFields(campos);
+
+  const rowHtml = (c, isPriority) => {
     const sinDato = c.valor === null || c.valor === undefined || String(c.valor).trim() === '';
     return `
-    <div class="field-row">
+    <div class="field-row${isPriority ? ' priority' : ''}">
       <div class="field-label">${escapeHtml(c.campo)}</div>
       <div class="field-value${sinDato ? ' no-data' : ''}">${sinDato ? 'No datos' : escapeHtml(String(c.valor))}</div>
     </div>`;
-  }).join('');
-  document.getElementById('modalBody').innerHTML = rows || '<div class="hint">Sin datos.</div>';
+  };
+
+  let html = priority.map(c => rowHtml(c, true)).join('');
+  if (resto.length) {
+    html += `<div class="field-divider">Otros datos</div>` + resto.map(c => rowHtml(c, false)).join('');
+  }
+  document.getElementById('modalBody').innerHTML = html || '<div class="hint">Sin datos.</div>';
 }
 
 function closeModal() { overlay.classList.remove('open'); }
@@ -383,7 +468,7 @@ async function loadCount() {
     const json = await res.json();
     if (!json.ok) return;
     document.getElementById('mTotal').textContent = json.data.total;
-    document.getElementById('countPill').style.display = 'inline-block';
+    document.getElementById('countPill').style.display = 'flex';
   } catch (e) { /* silencioso */ }
 }
 loadCount();
